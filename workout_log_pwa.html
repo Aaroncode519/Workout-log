@@ -1,0 +1,299 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Workout Log PWA</title>
+    <meta name="description" content="Workout Log for tracking exercises, reps, weights, and pain levels with progress charts.">
+    <meta name="theme-color" content="#4CAF50">
+    <link rel="manifest" href="/manifest.json">
+    <link rel="apple-touch-icon" href="/icon.png">
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f8f8f8; touch-action: manipulation; }
+        table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #e0e0e0; }
+        input, select { width: 100%; padding: 10px; font-size: 16px; box-sizing: border-box; }
+        button { padding: 12px; background-color: #4CAF50; color: white; border: none; cursor: pointer; font-size: 16px; width: 100%; margin: 10px 0; }
+        button:hover { background-color: #45a049; }
+        .alert { color: #d32f2f; font-weight: bold; }
+        .suggestion { color: #388e3c; }
+        .chart-container { margin: 20px 0; max-width: 100%; width: 100%; }
+        h1 { font-size: 24px; }
+        h2, h3 { color: #333; font-size: 20px; }
+        @media (max-width: 600px) { th, td { font-size: 14px; padding: 6px; } }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <h1>Workout Log</h1>
+    <h2>Day <span id="dayDisplay">1</span></h2>
+    <button onclick="toggleDay()">Switch to Day <span id="dayToggle">2</span></button>
+    <form id="workoutForm">
+        <table id="exerciseTable">
+            <thead id="tableHead"></thead>
+            <tbody id="tableBody"></tbody>
+        </table>
+        <button type="submit">Save Session</button>
+    </form>
+    <h2>Progress History</h2>
+    <table id="historyTable">
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>Day</th>
+                <th>Exercise</th>
+                <th>Sets</th>
+                <th>Reps</th>
+                <th>Weight (kg)</th>
+                <th>Pain Level (0-10)</th>
+                <th>Suggestion</th>
+            </tr>
+        </thead>
+        <tbody id="historyBody"></tbody>
+    </table>
+    <h2>Progress Charts</h2>
+    <h3>Day 1 Exercises</h3>
+    <div id="day1Charts"></div>
+    <h3>Day 2 Exercises</h3>
+    <div id="day2Charts"></div>
+
+    <script>
+        const exercises = {
+            day1: [
+                { name: "Barbell Back Squat", type: "barbell", sets: 3, minReps: 8, maxReps: 12, weight: 30 },
+                { name: "Barbell Bench Press", type: "barbell", sets: 3, minReps: 8, maxReps: 12, weight: 45 },
+                { name: "Pull-Ups", type: "bodyweight", sets: 3, minReps: 8, maxReps: 12, weight: 0 },
+                { name: "Dumbbell Overhead Press", type: "dumbbell", sets: 3, minReps: 10, maxReps: 12, weight: 10 },
+                { name: "Cable Face Pulls", type: "cable", sets: 3, minReps: 12, maxReps: 15, weight: 10 },
+                { name: "Forearm Plank", type: "core", sets: 3, minReps: 30, maxReps: 45, weight: 0, unit: "seconds" }
+            ],
+            day2: [
+                { name: "Barbell Deadlift", type: "barbell", sets: 3, minReps: 8, maxReps: 10, weight: 50 },
+                { name: "Dips", type: "bodyweight", sets: 3, minReps: 8, maxReps: 12, weight: 0 },
+                { name: "Single-Arm Cable Pulldown", type: "cable", sets: 3, minReps: 10, maxReps: 12, weight: 10 },
+                { name: "Dumbbell Goblet Squat", type: "dumbbell", sets: 3, minReps: 10, maxReps: 12, weight: 15 },
+                { name: "Cable Tricep Pushdowns", type: "cable", sets: 3, minReps: 12, maxReps: 15, weight: 10 },
+                { name: "Pallof Press", type: "core", sets: 3, minReps: 12, maxReps: 15, weight: 5 }
+            ]
+        };
+
+        let currentDay = "day1";
+        let history = JSON.parse(localStorage.getItem("workoutHistory")) || [];
+        let charts = {};
+
+        function renderTable() {
+            const tableHead = document.getElementById("tableHead");
+            const tableBody = document.getElementById("tableBody");
+            tableHead.innerHTML = "<tr><th>Exercise</th><th>Sets</th><th>Reps</th><th>Weight (kg)</th><th>Pain (0-10)</th></tr>";
+            tableBody.innerHTML = "";
+            exercises[currentDay].forEach((ex, index) => {
+                const row = document.createElement("tr");
+                row.innerHTML = `
+                    <td>${ex.name}</td>
+                    <td>${ex.sets}</td>
+                    <td><input type="number" id="reps_${index}" min="0" required></td>
+                    <td><input type="number" id="weight_${index}" value="${ex.weight}" ${ex.type === "bodyweight" || ex.type === "core" ? "disabled" : ""} step="0.5"></td>
+                    <td><input type="number" id="pain_${index}" min="0" max="10" required></td>
+                `;
+                tableBody.appendChild(row);
+            });
+            document.getElementById("dayDisplay").textContent = currentDay === "day1" ? "1" : "2";
+            document.getElementById("dayToggle").textContent = currentDay === "day1" ? "2" : "1";
+            renderHistory();
+            renderCharts();
+        }
+
+        function toggleDay() {
+            currentDay = currentDay === "day1" ? "day2" : "day1";
+            renderTable();
+        }
+
+        function getSuggestion(exercise, reps, weight, pain, prevSessions) {
+            const prevSameExercise = prevSessions.filter(s => s.exercise === exercise.name && s.day === currentDay).slice(-2);
+            if (pain >= 5) {
+                return `High pain (${pain}/10). Reduce weight by 10% or switch to ${exercise.type === "barbell" ? "dumbbell variation" : "lower intensity"}. Consult physio if persistent.`;
+            }
+            if (prevSameExercise.length >= 2 && prevSameExercise.every(s => s.reps >= exercise.maxReps && s.pain < 5)) {
+                if (exercise.type === "barbell") return `Hit ${exercise.maxReps} reps consistently. Increase weight by 2.5–5kg.`;
+                if (exercise.type === "dumbbell") return `Hit ${exercise.maxReps} reps consistently. Increase weight by 1–2kg or add 1–2 reps.`;
+                if (exercise.type === "bodyweight") return `Hit ${exercise.maxReps} reps. Add 1 rep or reduce assistance (e.g., lighter band).`;
+                if (exercise.type === "cable") return `Hit ${exercise.maxReps} reps. Increase weight slightly or add 1–3 reps.`;
+                if (exercise.type === "core") return `Hit ${exercise.maxReps} ${exercise.unit || "reps"}. Increase by 5–10s or 2–3 reps.`;
+            }
+            return "Maintain current weight/reps. Focus on form.";
+        }
+
+        function renderHistory() {
+            const historyBody = document.getElementById("historyBody");
+            historyBody.innerHTML = "";
+            history.forEach(session => {
+                const row = document.createElement("tr");
+                row.innerHTML = `
+                    <td>${session.date}</td>
+                    <td>${session.day}</td>
+                    <td>${session.exercise}</td>
+                    <td>${session.sets}</td>
+                    <td>${session.reps}</td>
+                    <td>${session.weight}</td>
+                    <td>${session.pain}</td>
+                    <td class="${session.pain >= 5 ? "alert" : "suggestion"}">${session.suggestion}</td>
+                `;
+                historyBody.appendChild(row);
+            });
+        }
+
+        function renderCharts() {
+            const day1Charts = document.getElementById("day1Charts");
+            const day2Charts = document.getElementById("day2Charts");
+            day1Charts.innerHTML = "";
+            day2Charts.innerHTML = "";
+            Object.keys(charts).forEach(key => charts[key].destroy());
+
+            ["day1", "day2"].forEach(day => {
+                exercises[day].forEach(ex => {
+                    const canvas = document.createElement("canvas");
+                    canvas.id = `chart_${ex.name.replace(/\s+/g, "_")}_${day}`;
+                    canvas.className = "chart-container";
+                    (day === "day1" ? day1Charts : day2Charts).appendChild(canvas);
+
+                    const sessions = history.filter(s => s.exercise === ex.name && s.day === (day === "day1" ? "Day 1" : "Day 2")).slice(-10);
+                    const labels = sessions.map(s => s.date);
+                    const repsData = sessions.map(s => s.reps);
+                    const weightData = sessions.map(s => s.weight);
+                    const painData = sessions.map(s => s.pain);
+
+                    charts[canvas.id] = new Chart(canvas, {
+                        type: "line",
+                        data: {
+                            labels: labels,
+                            datasets: [
+                                {
+                                    label: "Reps",
+                                    data: repsData,
+                                    borderColor: "#0288d1",
+                                    backgroundColor: "#0288d1",
+                                    yAxisID: "y",
+                                    fill: false
+                                },
+                                {
+                                    label: "Weight (kg)",
+                                    data: weightData,
+                                    borderColor: "#388e3c",
+                                    backgroundColor: "#388e3c",
+                                    yAxisID: "y1",
+                                    fill: false,
+                                    hidden: ex.type === "bodyweight" || ex.type === "core"
+                                },
+                                {
+                                    label: "Pain Level (0-10)",
+                                    data: painData,
+                                    borderColor: "#d32f2f",
+                                    backgroundColor: "#d32f2f",
+                                    yAxisID: "y",
+                                    fill: false
+                                }
+                            ]
+                        },
+                        options: {
+                            responsive: true,
+                            scales: {
+                                x: { title: { display: true, text: "Date" } },
+                                y: {
+                                    type: "linear",
+                                    display: true,
+                                    position: "left",
+                                    title: { display: true, text: ex.unit === "seconds" ? "Seconds/Reps" : "Reps/Pain" },
+                                    suggestedMin: 0,
+                                    suggestedMax: Math.max(15, ...repsData, ...painData) + 5
+                                },
+                                y1: {
+                                    type: "linear",
+                                    display: ex.type !== "bodyweight" && ex.type !== "core",
+                                    position: "right",
+                                    title: { display: true, text: "Weight (kg)" },
+                                    suggestedMin: 0,
+                                    suggestedMax: Math.max(...weightData, ex.weight) + 10,
+                                    grid: { drawOnChartArea: false }
+                                }
+                            },
+                            plugins: { title: { display: true, text: `${ex.name} Progress` } }
+                        }
+                    });
+                });
+            });
+        }
+
+        document.getElementById("workoutForm").addEventListener("submit", (e) => {
+            e.preventDefault();
+            const date = new Date().toLocaleDateString();
+            exercises[currentDay].forEach((ex, index) => {
+                const reps = parseInt(document.getElementById(`reps_${index}`).value);
+                const weight = ex.type === "bodyweight" || ex.type === "core" ? ex.weight : parseFloat(document.getElementById(`weight_${index}`).value);
+                const pain = parseInt(document.getElementById(`pain_${index}`).value);
+                const suggestion = getSuggestion(ex, reps, weight, pain, history);
+                history.push({
+                    date,
+                    day: currentDay === "day1" ? "Day 1" : "Day 2",
+                    exercise: ex.name,
+                    sets: ex.sets,
+                    reps,
+                    weight,
+                    pain,
+                    suggestion
+                });
+            });
+            localStorage.setItem("workoutHistory", JSON.stringify(history));
+            renderHistory();
+            renderCharts();
+            document.getElementById("workoutForm").reset();
+        });
+
+        // Register service worker for offline support
+        if ("serviceWorker" in navigator) {
+            navigator.serviceWorker.register("/sw.js").catch(err => console.error("Service Worker registration failed:", err));
+        }
+
+        renderTable();
+    </script>
+</body>
+</html>
